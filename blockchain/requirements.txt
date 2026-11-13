@@ -1,0 +1,3 @@
+# Membre 2 — décommenter selon la plateforme retenue
+# web3>=6.15          # si Ethereum
+# py-solc-x>=2.0      # si Ethereum

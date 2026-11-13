@@ -1,0 +1,5 @@
+# Membre 1
+flwr>=1.8
+torch>=2.2
+pandas>=2.1
+scikit-learn>=1.4
