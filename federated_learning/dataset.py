@@ -19,7 +19,10 @@ docs/decisions.md (D2, D3).
 """
 from __future__ import annotations
 
+import argparse
+import csv
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
 
@@ -119,7 +122,9 @@ def generate_synthetic(
                 X[rows, col] = rng.random(rows.size) < spec
             else:
                 mean, std = spec
-                X[rows, col] = rng.normal(mean, std, rows.size)
+                low, high = _BOUNDS[feature]
+                # Pas de valeur impossible (CRP négative, âge > 90…).
+                X[rows, col] = np.clip(rng.normal(mean, std, rows.size), low, high)
     # Valeurs manquantes aléatoires, comme dans un vrai dossier clinique.
     X[rng.random(X.shape) < missing_rate] = np.nan
     return X.astype(np.float32), y.astype(np.int64)
@@ -157,6 +162,21 @@ def partition(
                      une loi de Dirichlet(alpha) ; plus alpha est petit, plus
                      les cliniques sont différentes.
     """
+    indices = partition_indices(y, clinics=clinics, mode=mode, alpha=alpha, seed=seed)
+    return {clinic: (X[idx], y[idx]) for clinic, idx in indices.items()}
+
+
+def partition_indices(
+    y: np.ndarray,
+    clinics: list[str] | None = None,
+    mode: str = "iid",
+    alpha: float = 0.5,
+    seed: int = 42,
+) -> dict[str, np.ndarray]:
+    """Indices (triés) des patients attribués à chaque clinique.
+
+    Même règle que `partition`, qui s'appuie sur cette fonction.
+    """
     clinics = list(clinics or CLINICS)
     rng = np.random.default_rng(seed)
     assigned: dict[str, list[np.ndarray]] = {c: [] for c in clinics}
@@ -173,11 +193,7 @@ def partition(
                 assigned[clinic].append(part)
     else:
         raise ValueError(f"mode inconnu : {mode!r} (attendu 'iid' ou 'non_iid')")
-    result = {}
-    for clinic in clinics:
-        idx = np.sort(np.concatenate(assigned[clinic]))
-        result[clinic] = (X[idx], y[idx])
-    return result
+    return {c: np.sort(np.concatenate(assigned[c])) for c in clinics}
 
 
 def train_test_split(
@@ -205,3 +221,86 @@ def load_clinic_datasets(
         clinic: ClinicData(clinic, *train_test_split(Xc, yc, test_ratio, seed))
         for clinic, (Xc, yc) in parts.items()
     }
+
+
+def _write_csv(path: Path, header: list[str], rows) -> None:
+    """Écrit un fichier CSV (séparateur virgule, UTF-8)."""
+    with path.open("w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(header)
+        writer.writerows(rows)
+
+
+def _fmt(value: float) -> str:
+    """Nombre lisible ; cellule vide pour une valeur manquante."""
+    return "" if np.isnan(value) else f"{value:.4g}"
+
+
+def export_dataset(
+    out_dir: str | Path = "data",
+    n_patients: int = 3000,
+    seed: int = 42,
+    mode: str = "iid",
+    alpha: float = 0.5,
+    test_ratio: float = 0.2,
+) -> list[Path]:
+    """Écrit le jeu en CSV pour pouvoir le consulter (Excel, pandas…).
+
+    - patients.csv : patients bruts (valeurs manquantes = cellule vide),
+      classe en clair et clinique de chaque patient ;
+    - clinic_X.csv : données nettoyées de la clinique, avec la colonne
+      `split` (train / test) identique à `load_clinic_datasets`.
+    Retourne la liste des fichiers écrits.
+    """
+    out = Path(out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    X_raw, y = generate_synthetic(n_patients=n_patients, seed=seed)
+    X_clean = clean(X_raw)
+    indices = partition_indices(y, mode=mode, alpha=alpha, seed=seed)
+
+    clinic_of = np.empty(len(y), dtype=object)
+    for clinic, idx in indices.items():
+        clinic_of[idx] = clinic
+    files = [out / "patients.csv"]
+    _write_csv(
+        files[0],
+        ["patient_id", "clinique", *FEATURES, "classe"],
+        (
+            [f"P{i:05d}", clinic_of[i], *(_fmt(v) for v in X_raw[i]), CLASSES[y[i]]]
+            for i in range(len(y))
+        ),
+    )
+
+    for clinic, idx in indices.items():
+        order = np.random.default_rng(seed).permutation(len(idx))
+        n_test = int(round(len(idx) * test_ratio))
+        split = np.full(len(idx), "train", dtype=object)
+        split[order[:n_test]] = "test"
+        path = out / f"{clinic}.csv"
+        _write_csv(
+            path,
+            ["patient_id", *FEATURES, "classe", "split"],
+            (
+                [f"P{i:05d}", *(f"{v:.4f}" for v in X_clean[i]), CLASSES[y[i]], s]
+                for i, s in zip(idx, split)
+            ),
+        )
+        files.append(path)
+    return files
+
+
+def main(argv: list[str] | None = None) -> None:
+    """Commande : python -m federated_learning.dataset [--mode non_iid] ..."""
+    parser = argparse.ArgumentParser(description="Exporte le jeu synthétique en CSV.")
+    parser.add_argument("--out", default="data")
+    parser.add_argument("--n-patients", type=int, default=3000)
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--mode", choices=["iid", "non_iid"], default="iid")
+    parser.add_argument("--alpha", type=float, default=0.5)
+    args = parser.parse_args(argv)
+    for path in export_dataset(args.out, args.n_patients, args.seed, args.mode, args.alpha):
+        print(f"-> {path}")
+
+
+if __name__ == "__main__":
+    main()

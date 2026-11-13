@@ -78,3 +78,30 @@ def test_load_clinic_datasets():
         assert not np.isnan(d.X_train).any()
         total += len(d.y_train) + len(d.y_test)
     assert total == 1000
+
+
+def test_export_csv(tmp_path):
+    import csv
+
+    files = ds.export_dataset(tmp_path, n_patients=600, seed=9, mode="non_iid")
+    assert [f.name for f in files] == ["patients.csv"] + [f"{c}.csv" for c in ds.CLINICS]
+
+    with files[0].open(encoding="utf-8") as f:
+        patients = list(csv.DictReader(f))
+    assert len(patients) == 600
+    assert {p["classe"] for p in patients} <= set(ds.CLASSES)
+    assert {p["clinique"] for p in patients} == set(ds.CLINICS)
+
+    # Chaque CSV de clinique correspond exactement à load_clinic_datasets.
+    data = ds.load_clinic_datasets(n_patients=600, seed=9, mode="non_iid")
+    for clinic in ds.CLINICS:
+        with (tmp_path / f"{clinic}.csv").open(encoding="utf-8") as f:
+            rows = list(csv.DictReader(f))
+        assert all(r["classe"] in ds.CLASSES for r in rows)
+        train = [r for r in rows if r["split"] == "train"]
+        test = [r for r in rows if r["split"] == "test"]
+        assert len(train) == len(data[clinic].y_train)
+        assert len(test) == len(data[clinic].y_test)
+        assert sorted(ds.CLASSES.index(r["classe"]) for r in test) == sorted(
+            data[clinic].y_test.tolist()
+        )
