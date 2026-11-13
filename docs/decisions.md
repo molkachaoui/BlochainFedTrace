@@ -7,7 +7,7 @@
 | D3 | Paramètres toujours en dict nommé, sauvegardés en `.npz` | adoptée |
 | D4 | Stockage hors chaîne selon `common/paths.py` | adoptée |
 | D5 | Plateforme blockchain : Hyperledger Fabric ou Ethereum | **à instruire (Membre 2)** |
-| D6 | Jeu de données médical | **à instruire (Membre 1)** |
+| D6 | Jeu de données médical : synthétique (`federated_learning/dataset.py`) | adoptée |
 | D7 | Stratégie d'agrégation robuste (trimmed mean, Krum, médiane…) | **à instruire (Membre 1)** |
 
 ## D2 — Règle canonique d'empreinte
@@ -21,6 +21,19 @@
 Flower transmet une liste ordonnée de tableaux. Le Membre 1 la reconvertit
 en dict avec les noms du `state_dict` PyTorch (ordre fixe) avant toute
 sauvegarde ou appel au hook.
+
+## D6 — Jeu de données synthétique
+- Aucune donnée de patient réel : les patients sont générés avec une graine
+  fixe (`federated_learning/dataset.py`, `generate_synthetic`).
+- 3 classes : sain, lupus, polyarthrite rhumatoïde ; 10 variables (âge, sexe,
+  ANA, anti-dsDNA, FR, anti-CCP, CRP, VS, C3, C4) et ~2 % de valeurs manquantes.
+- Nettoyage par constantes fixes (valeur normale pour les manquants, bornes
+  physiologiques, mise à l'échelle [0, 1]) : identique dans chaque clinique.
+- Partition en `clinic_A`, `clinic_B`, `clinic_C` : `iid` ou `non_iid`
+  (Dirichlet, paramètre `alpha`), puis séparation entraînement/test 80/20.
+- Écarté : le jeu public « Diagnosis of rheumatic and autoimmune diseases »
+  (vrais patients, contraire à la règle du README). L'interface
+  `load_clinic_datasets` permet d'ajouter une autre source plus tard.
 
 ## D5 — Critères de choix du registre (section 7)
 Permissionné ou public ; gestion des identités ; règles de validation ;
